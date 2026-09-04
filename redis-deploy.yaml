@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dbredis-matos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dbredis-matos
+  template:
+    metadata:
+      labels:
+        app: dbredis-matos
+    spec:
+      containers:
+      - name: redis
+        image: redis:alpine
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dbredis-matos
+spec:
+  selector:
+    app: dbredis-matos
+  ports:
+  - protocol: TCP
+    port: 6379
+    targetPort: 6379
