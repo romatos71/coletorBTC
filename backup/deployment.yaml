@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bitcoin-collector
+  labels:
+    app: bitcoin-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bitcoin-collector
+  template:
+    metadata:
+      labels:
+        app: bitcoin-collector
+    spec:
+      containers:
+      - name: collector
+        image: python:3.11-slim
+        # Como o script precisa instalar bibliotecas (requests e redis), 
+        # este comando instala e roda o script diretamente (em produção o ideal é criar uma imagem Docker própria)
+        command: ["/bin/sh", "-c"]
+        args: 
+          - pip install requests redis && python -c '
+            import os, time, redis, requests
+            REDIS_HOST = os.getenv("REDIS_HOST", "valkey-db")
+            REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+            INTERVALO = int(os.getenv("INTERVALO_SEGUNDOS", 15))
+            client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+            API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+            print(f"Iniciando coletor. Intervalo: {INTERVALO}s", flush=True)
+            while True:
+                try:
+                    res = requests.get(API_URL, timeout=10).json()
+                    preco = res["bitcoin"]["usd"]
+                    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                    client.set("bitcoin:preco", preco)
+                    client.set("bitcoin:ultima_atualizacao", ts)
+                    print(f"[{ts}] Preço BTC: $ {preco} USD salvo no Valkey.", flush=True)
+                except Exception as e:
+                    print(f"Erro: {e}", flush=True)
+                time.sleep(INTERVALO)
+            '
+        resources:
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+        env:
+        - name: REDIS_HOST
+          value: "valkey-db"
+        - name: INTERVALO_SEGUNDOS
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: INTERVALO_SEGUNDOS

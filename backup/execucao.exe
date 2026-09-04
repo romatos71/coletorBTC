@@ -1,0 +1,1 @@
+oc exec -it deployment/bitcoin-collector -- python -c "import sys; sys.path.insert(0, '/tmp/site-packages'); exec(open('/tmp/script.py').read())"
