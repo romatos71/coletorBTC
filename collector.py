@@ -1,46 +1,46 @@
+import os
 import time
-import json
 import requests
-from datetime import datetime
 import redis
 
-# Conexão com o Redis (local ou via variável de ambiente no OpenShift)
-REDIS_URL = "redis://localhost:6379"
-r = redis.from_url(REDIS_URL)
+# Configurações de conexão vindas das variáveis de ambiente do OpenShift
+REDIS_URL = os.getenv('REDIS_URL', 'redis://dbredis-matos:6379')
+INTERVALO = int(os.getenv('INTERVALO_SEGUNDOS', '30'))
 
-API_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,brl"
+# Conecta ao Redis
+client = redis.Redis.from_url(REDIS_URL)
 
-def fetch_and_store():
+print(f"Iniciando coletor de Bitcoin. Conectado ao Redis em: {REDIS_URL}")
+
+def buscar_preco_bitcoin():
     try:
-        response = requests.get(API_URL, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            btc = data.get("bitcoin", {})
-            
-            usd_price = btc.get("usd", 0)
-            brl_price = btc.get("brl", 0)
-            
-            now = datetime.now()
-            timestamp_ms = int(now.timestamp() * 1000)
-            
-            # Formato do registro para salvar no Redis
-            record = {
-                "source": "CoinGecko",
-                "timestamp": timestamp_ms,
-                "usd": usd_price,
-                "brl": brl_price
+        # Usando a API pública da CoinGecko para pegar o preço em USD e BRL
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,brl"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        
+        if 'bitcoin' in data:
+            timestamp = int(time.time() * 1000) # Milissegundos para o gráfico
+            registro = {
+                "timestamp": timestamp,
+                "usd": data['bitcoin']['usd'],
+                "brl": data['bitcoin']['brl']
             }
-            
-            # Usando Sorted Set (ZADD) onde o score é o timestamp para ordenar o histórico
-            r.zadd("bitcoin_history", {json.dumps(record): timestamp_ms})
-            print(f"[{now.strftime('%d/%m/%Y %H:%M:%S]')} Coletado -> USD: ${usd_price} | BRL: R${brl_price}")
-        else:
-            print("Erro ao acessar a API de preços:", response.status_code)
+            return registro
     except Exception as e:
-        print("Erro na execução do coletor:", e)
+        print(f"Erro ao buscar preço da API: {e}")
+    return None
 
-if __name__ == "__main__":
-    print("Iniciando coletor de Bitcoin (a cada 5 segundos)...")
-    while True:
-        fetch_and_store()
-        time.sleep(5)
+# Loop principal de coleta
+while True:
+    dados = buscar_preco_bitcoin()
+    if dados:
+        import json
+        payload = json.dumps(dados)
+        # Adiciona na lista ordenada do Redis (ZADD)
+        client.zadd('bitcoin_history', {payload: dados['timestamp']})
+        # Opcional: Mantém apenas os últimos 1000 registros para não lotar o Redis
+        client.zremrangebyrank('bitcoin_history', 0, -1001)
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Preço salvo: USD {dados['usd']} | BRL {dados['brl']}")
+    
+    time.sleep(INTERVALO)
